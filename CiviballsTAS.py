@@ -24,8 +24,7 @@ class TASBOT:
             print("")
         pyautogui.moveTo(self.x + self.xscale * x, self.y + self.yscale * y)
 
-    def mouseClick(self, x, y):
-        self.moveMouse(x, y)
+    def mouseClick(self):
         pyautogui.click()
 
     def getMouse(self):
@@ -112,10 +111,11 @@ class TASBOT:
     # time, x, y
     # where time was since first click
     def logClicks(self):
-        log = "0,"
+        log = ""
         # Wait for first click before starting timer
         self.waitForClick()
         start = time.time()
+        log += str(time.time() - start) + ","
         x,y = pyautogui.position()
         log += str((x - self.x)/self.xscale) + ","
         log += str((y - self.y)/self.yscale) + "\n"
@@ -182,12 +182,13 @@ class TASBOT:
         # click [2] y of click
         for click in log:
             # if first click in log file, start time after click
+            self.moveMouse(click[1], click[2])
             if (click[0] < .0001):
                 time.sleep(self.levelLoad)
-                self.mouseClick(click[1], click[2])
+                self.mouseClick()
                 start = time.time()
                 continue
-                
+            
             if click[0] > (time.time() - start):
                 if self.listenKey == pynput.keyboard.Key.esc:
                     print("Cancelled wait: ESC")
@@ -198,21 +199,17 @@ class TASBOT:
                         keyListener.start()
                         keyListener.join()
                     return False
-                time.sleep(click[0] - (time.time() - start) - self.clockErr)
+                
+                time.sleep(click[0] - (time.time() - start))
             else:
                 print("Too slow!")
-            self.mouseClick(click[1], click[2])
+                
+            self.mouseClick()
 
 
 
 bot = TASBOT()
-bot.x = 100
-bot.y = 100
-bot.xscale = 100
-bot.yscale = 100
-bot.logClicks()
-print(bot.clockErr)
-quit()
+
 if bot.findGame():
     # print("Bot will start recording on the first click. Stop recording with the ESC key:")
 
@@ -223,8 +220,15 @@ if bot.findGame():
     logFile.write(log)
     logFile.close()
     '''
+    logFile = open("egypt2.txt", "r")
+    log = logFile.read()[:-1]
+    logFile.close()
+    bot.replayLog(log)
     
-    worlds = ["egypt", "china", "greece"]
+    quit()
+    
+    #worlds = ["egypt", "china", "greece"]
+    worlds = ["egypt"]
     log = ""
     for world in worlds:
         for level in range(1,11):
@@ -241,4 +245,5 @@ if bot.findGame():
     # remove trailing null
     log = log[:-1]
     bot.replayLog(log)
+    
     
