@@ -10,7 +10,7 @@ class TASBOT:
         self.ymax = None
         self.xscale = None
         self.yscale = None
-        self.levelLoad = 0
+        self.levelLoad = 0.01
         self.listenKey = 0
         self.splitKey = 0
         pass
@@ -142,7 +142,7 @@ class TASBOT:
             keyListener.start()
             event = mouseListener.get(.001) 
             # while event hasn't registered a click
-            while not hasattr(event, 'pressed'):
+            while not (hasattr(event, 'pressed') and event.pressed):
                 if self.listenKey == pynput.keyboard.Key.esc:
                     print("Cancelled wait: ESC")
                     keyListener.stop()
@@ -152,9 +152,8 @@ class TASBOT:
                         keyListener.start()
                         keyListener.join()
                     return False
-                event = mouseListener.get(.001) 
-            while not hasattr(event, "pressed"):
-                event = mouseListener.get(.001) 
+                event = mouseListener.get(.001)
+            self.clockErr = time.time()
             return True
         
 
@@ -177,11 +176,19 @@ class TASBOT:
         keyListener = pynput.keyboard.Listener(on_press=self.listenerOnPress)
         keyListener.start()
         log = [[float(num) for num in click.split(",")] for click in log.split("\n")]
-        # log = [click.split(",") for click in log.split("\n")]
         start = time.time()
+        # click[0] time after first click
+        # click [1] x of click
+        # click [2] y of click
         for click in log:
-            sleep = click[0] - (time.time() - start)
-            if sleep >= 0:
+            # if first click in log file, start time after click
+            if (click[0] < .0001):
+                time.sleep(self.levelLoad)
+                self.mouseClick(click[1], click[2])
+                start = time.time()
+                continue
+                
+            if click[0] > (time.time() - start):
                 if self.listenKey == pynput.keyboard.Key.esc:
                     print("Cancelled wait: ESC")
                     keyListener.stop()
@@ -191,34 +198,47 @@ class TASBOT:
                         keyListener.start()
                         keyListener.join()
                     return False
-                time.sleep(click[0] - (time.time() - start))
+                time.sleep(click[0] - (time.time() - start) - self.clockErr)
+            else:
+                print("Too slow!")
             self.mouseClick(click[1], click[2])
 
 
 
 bot = TASBOT()
+bot.x = 100
+bot.y = 100
+bot.xscale = 100
+bot.yscale = 100
+bot.logClicks()
+print(bot.clockErr)
+quit()
 if bot.findGame():
     # print("Bot will start recording on the first click. Stop recording with the ESC key:")
-    
+
+    '''
+    print("Ready to log.")
     log = bot.logClicks()
-    logFile = open("egypt1.txt", "w")
+    logFile = open("egypt2.txt", "w")
     logFile.write(log)
     logFile.close()
-    quit()
+    '''
     
     worlds = ["egypt", "china", "greece"]
     log = ""
     for world in worlds:
         for level in range(1,11):
-            # print("Ready to log " + world + str(level))
             '''
+            print("Ready to log " + world + str(level))
             log = bot.logClicks()
             logFile = open(world + str(level) + ".txt", "w")
             logFile.write(log)
             logFile.close()
             '''
             logFile = open(world + str(level) + ".txt", "r")
-            log += logFile.read()[:-1]
+            log += logFile.read()[:-1] + "\n"
             logFile.close()
+    # remove trailing null
+    log = log[:-1]
     bot.replayLog(log)
     
