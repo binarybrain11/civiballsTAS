@@ -1,18 +1,25 @@
 import pyautogui
 import pynput
 import time
+import os
 
 class TASBOT:
-    def __init__(self):
-        self.x = None
-        self.y = None
-        self.xmax = None
-        self.ymax = None
-        self.xscale = None
-        self.yscale = None
+    def __init__(self, x = None, y = None, xmax = None, ymax = None):
+        self.x = x
+        self.y = y
+        self.xmax = xmax
+        self.ymax = ymax
+        if not (x is None or y is None or xmax is None or ymax is None):
+            self.xscale = self.xmax - self.x
+            self.yscale = self.ymax - self.y
+        else:
+            self.xscale = None
+            self.yscale = None
         self.levelLoad = 0.01
-        self.listenKey = 0
         self.splitKey = 0
+        self.focusClick = {"x":0.05, "y":0.5}
+        # Keyboard listener logs the last key pressed here
+        self.listenKey = 0
         pass
 
     # x and y are between 0 and 1
@@ -24,7 +31,9 @@ class TASBOT:
             print("")
         pyautogui.moveTo(self.x + self.xscale * x, self.y + self.yscale * y)
 
-    def mouseClick(self):
+    def mouseClick(self, x = None, y = None):
+        if x != None and y != None:
+            self.moveMouse(x, y)
         pyautogui.click()
 
     def getMouse(self):
@@ -99,6 +108,7 @@ class TASBOT:
 
         self.xscale = self.xmax - self.x
         self.yscale = self.ymax - self.y
+        print("Min: (%i, %i)\nMax: (%i, %i)" % (self.x, self.y, self.xmax, self.ymax))
         return True
 
     def printClick(self):
@@ -169,13 +179,14 @@ class TASBOT:
         with pynput.keyboard.Listener(on_press=self.listenerOnPress) as listener:
             listener.join()
 
-    def replayLog(self, log):
+    def replayClickLog(self, log):
         # process the log string into click events
         # Key listener allows for user to escape 
         print("Replay started! Cancel replay with ESC:")
         keyListener = pynput.keyboard.Listener(on_press=self.listenerOnPress)
         keyListener.start()
         log = [[float(num) for num in click.split(",")] for click in log.split("\n")]
+        self.mouseClick(self.focusClick["x"], self.focusClick["y"])
         start = time.time()
         # click[0] time after first click
         # click [1] x of click
@@ -188,9 +199,8 @@ class TASBOT:
                 self.mouseClick()
                 start = time.time()
                 continue
-            
-            if click[0] > (time.time() - start):
-                if self.listenKey == pynput.keyboard.Key.esc:
+
+            if self.listenKey == pynput.keyboard.Key.esc:
                     print("Cancelled wait: ESC")
                     keyListener.stop()
                     # Reset ESC key 
@@ -199,33 +209,173 @@ class TASBOT:
                         keyListener.start()
                         keyListener.join()
                     return False
+
+            if click[0] > (time.time() - start):
                 
                 time.sleep(click[0] - (time.time() - start))
             else:
                 print("Too slow!")
                 
             self.mouseClick()
+        return True
 
+    def editClickLog(self, path):
+        print("Editor launched for %s. Type 'help' for a list of commands" % (path))
+        # Keep track of the min and max delay to do a binary search for best delay
+        clickRange = {"min": None, "max": None}
+        clickDict = {}
+        noReplay = ["help", "record"]
+        command = ""
+        while True:
+            if command not in noReplay:
+                logFile = open(path, "r")
+                log = logFile.read()[:-1]
+                logFile.close()
+                self.replayClickLog(log)
+            newLog = None
+            # command processing
+            command = input(": ").split(" ")
+            if command[0] == "help":
+                print('''
+quit                        Quits the editor
+fast    <click number>      Attempts to do an incremental binary search for best time 
+                            on <click number>. Clicks are 0 indexed and can be 
+                            negative indexed (last click is index -1). Fast 
+                            indicates the click was too fast, so the delay will be 
+                            increased.
+slow    <click number>      Attempts to do an incremental binary search for best time 
+                            on <click number>. Clicks are 0 indexed and can be 
+                            negative indexed (last click is index -1). Slow 
+                            indicates the click was too slow, so the delay will be 
+                            decreased.
+                ''')
+            # fast indicates the click was too soon. Click number is first argument
+            # and is 0 indexed for simple code, in other words the first click has 
+            # click number 0. Negative numbers read from the last click, so the last
+            # click could be referenced with click number -1
+            elif command[0] == "fast":
+                logLines = log.split("\n")
+                if len(command) < 2:
+                    print("Improper use of fast:\n: fast <click number>")
+                elif int(command[1]) > len(logLines) or int(command[1]) < -1 * len(logLines):
+                    print("Click number exceeds number of clicks")
+                else:
+                    click = None
+                    click = logLines[int(command[1])].split(",")
+                    clickTime = float(click[0])
+                    newClickTime = None
+                    # If the current click has no entry in the dictionary, add a blank one
+                    if int(command[1]) not in clickDict:
+                        clickDict[int(command[1])] = clickRange.copy()
+                    range = clickDict[int(command[1])]
+                    # Since the click was too fast, the click has at least this delay
+                    range["min"] = clickTime
+                    if range["max"] is None:
+                        newClickTime = range["min"] + 0.5
+                    else:
+                        newClickTime = (range["max"] + range["min"])/2
+                    click[0] = str(newClickTime)
+                    # combine elements in array click to a single string
+                    newLogLine = ",".join(click)
+                    logLines[int(command[1])] = newLogLine
+                    newLog = "\n".join(logLines)
 
+            elif command[0] == "slow":
+                logLines = log.split("\n")
+                if len(command) < 2:
+                    print("Improper use of slow:\n: slow <click number>")
+                elif int(command[1]) > len(logLines) or int(command[1]) < -1 * len(logLines):
+                    print("Click number exceeds number of clicks")
+                else:
+                    click = None
+                    click = logLines[int(command[1])].split(",")
+                    clickTime = float(click[0])
+                    newClickTime = None
+                    # If the current click has no entry in the dictionary, add a blank one
+                    if int(command[1]) not in clickDict:
+                        clickDict[int(command[1])] = clickRange.copy()
+                    range = clickDict[int(command[1])]
+                    # Since the click was too slow, the click has at most this delay
+                    range["max"] = clickTime
+                    if range["min"] is None:
+                        newClickTime = range["max"] - 0.5
+                    else:
+                        newClickTime = (range["max"] + range["min"])/2
+                    click[0] = str(newClickTime)
+                    # combine elements in array click to a single string
+                    newLogLine = ",".join(click)
+                    logLines[int(command[1])] = newLogLine
+                    newLog = "\n".join(logLines)
 
-bot = TASBOT()
+            elif command[0] == "swap":
+                logLines = log.split("\n")
+                if len(command) < 3:
+                    print("Improper use of swap:\n: swap <click number> <click number>")
+                elif int(command[1]) > len(logLines) or int(command[1]) < -1 * len(logLines) or int(command[2]) > len(logLines) or int(command[2]) < -1 * len(logLines):
+                    print("Click number exceeds number of clicks")
+                else:
+                    temp = logLines[int(command[1])]
+                    logLines[int(command[1])] = logLines[int(command[2])]
+                    logLines[int(command[2])] = temp
+                    newLog = "\n".join(logLines)
 
-if bot.findGame():
+            elif command[0] == "record":
+                confirm = input("Recording will overwrite the current file. Are you sure? (y/n)")
+                if confirm[0] == "y":
+                    print("Recording will start on your first click: ")
+                    newLog = self.logClicks()
+
+            elif command[0] == "load":
+                if len(command) < 2:
+                    print("Improper use of load:\n: load <file path>")
+                else:
+                    if os.access(command[1], os.R_OK) and os.access(command[1], os.W_OK):
+                        path = command[1]
+                        clickDict = {}
+
+            elif command[0] == "new":
+                if len(command) < 2:
+                    print("Improper use of new:\n: new <file path>")
+                else:
+                    if os.access(command[1], os.W_OK):
+                        path = command[1]
+                        clickDict = {}
+                        newLog = self.logClicks()
+
+            elif command[0] == "quit":
+                return
+
+            if newLog is not None:    
+                logFile = open(path, "w")
+                logFile.write(newLog)
+                logFile.close()
+            
+
+#fullscreen = (312, 66, 1607, 1040)
+#left = (0, 198, 959, 916)
+
+bot = TASBOT(0, 198, 959, 916)
+
+if bot.xscale is not None or bot.findGame():
     # print("Bot will start recording on the first click. Stop recording with the ESC key:")
-
-    '''
+    time.sleep(1)
+    
     print("Ready to log.")
     log = bot.logClicks()
-    logFile = open("egypt2.txt", "w")
+    logFile = open("egypt10.txt", "w")
     logFile.write(log)
     logFile.close()
+    
     '''
-    logFile = open("egypt2.txt", "r")
+    logFile = open("egypt9.txt", "r")
     log = logFile.read()[:-1]
     logFile.close()
-    bot.replayLog(log)
+    bot.replayClickLog(log)
+    '''
+    bot.editClickLog("egypt10.txt")
     
     quit()
+    
     
     #worlds = ["egypt", "china", "greece"]
     worlds = ["egypt"]
@@ -244,6 +394,6 @@ if bot.findGame():
             logFile.close()
     # remove trailing null
     log = log[:-1]
-    bot.replayLog(log)
+    bot.replayClickLog(log)
     
     
