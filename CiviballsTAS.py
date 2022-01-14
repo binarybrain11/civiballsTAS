@@ -354,7 +354,7 @@ slow    <click number>      Attempts to do an incremental binary search for best
 #fullscreen = (312, 66, 1607, 1040)
 #left = (0, 198, 959, 916)
 
-bot = TASBOT(0, 198, 959, 916)
+bot = TASBOT()
 
 if bot.xscale is not None or bot.findGame():
     # print("Bot will start recording on the first click. Stop recording with the ESC key:")
