@@ -15,6 +15,7 @@ class TASBOT:
         else:
             self.xscale = None
             self.yscale = None
+        self.rate = .0001
         self.levelLoad = 0.01
         self.splitKey = 0
         self.focusClick = {"x":0.05, "y":0.5}
@@ -150,7 +151,7 @@ class TASBOT:
             # Key listener allows for user to escape 
             keyListener = pynput.keyboard.Listener(on_press=self.listenerOnPress)
             keyListener.start()
-            event = mouseListener.get(.001) 
+            event = mouseListener.get(self.rate) 
             # while event hasn't registered a click
             while not (hasattr(event, 'pressed') and event.pressed):
                 if self.listenKey == pynput.keyboard.Key.esc:
@@ -162,7 +163,7 @@ class TASBOT:
                         keyListener.start()
                         keyListener.join()
                     return False
-                event = mouseListener.get(.001)
+                event = mouseListener.get(self.rate)
             self.clockErr = time.time()
             return True
         
@@ -222,15 +223,15 @@ class TASBOT:
     def editClickLog(self, path):
         print("Editor launched for %s. Type 'help' for a list of commands" % (path))
         # Keep track of the min and max delay to do a binary search for best delay
-        clickRange = {"min": None, "max": None}
+        clickRange = {"min": None, "max": None, "fast grow": 1}
         clickDict = {}
-        noReplay = ["help", "record"]
+        noReplay = ["help", "record", "new"]
         command = ""
         while True:
-            if command not in noReplay:
-                logFile = open(path, "r")
-                log = logFile.read()[:-1]
-                logFile.close()
+            logFile = open(path, "r")
+            log = logFile.read()[:-1]
+            logFile.close()
+            if not (command in noReplay):
                 self.replayClickLog(log)
             newLog = None
             # command processing
@@ -248,6 +249,21 @@ slow    <click number>      Attempts to do an incremental binary search for best
                             negative indexed (last click is index -1). Slow 
                             indicates the click was too slow, so the delay will be 
                             decreased.
+swap    <click 1> <click 2> Swaps the order of the two clicks specified. 
+record                      Overwrites the current file with a new recording. After 
+                            confirmation prompt, recording starts on the next click.
+load    <file path>         Saves the current file and opens the file specified. If
+                            that file can't be opened, then the current file remains
+                            open. 
+new     <file path>         Creates a new file, records the user's clicks, then saves 
+                            the recording to that file. 
+
+    A typical workflow starts with opening a level in game, then loading the level log
+file in the editor. The editor will play back that log file, then prompt for input with 
+: at which point the user should prepare the game for the following command, for example 
+resetting the level before changing the timing  for a click, because in most cases the 
+editor will replay the log right after a change to it. To replay the log without any 
+changes to it, simply hit enter without any commands or send an unrecognized command.
                 ''')
             # fast indicates the click was too soon. Click number is first argument
             # and is 0 indexed for simple code, in other words the first click has 
@@ -340,10 +356,19 @@ slow    <click number>      Attempts to do an incremental binary search for best
                     if os.access(command[1], os.W_OK):
                         path = command[1]
                         clickDict = {}
+                        print("Ready to log ", path)
                         newLog = self.logClicks()
+                    else:
+                        print("Can't write to ", command[1])
 
             elif command[0] == "quit":
                 return
+
+            elif command[0] == "":
+                # do nothing
+                True
+            else: 
+                print("Command not recognized. Nothing changed, replaying the log file: ")
 
             if newLog is not None:    
                 logFile = open(path, "w")
@@ -354,27 +379,30 @@ slow    <click number>      Attempts to do an incremental binary search for best
 #fullscreen = (312, 66, 1607, 1040)
 #left = (0, 198, 959, 916)
 
+#bot = TASBOT(0, 198, 959, 916)
 bot = TASBOT()
 
 if bot.xscale is not None or bot.findGame():
     # print("Bot will start recording on the first click. Stop recording with the ESC key:")
     time.sleep(1)
-    
+    '''
     print("Ready to log.")
     log = bot.logClicks()
     logFile = open("egypt10.txt", "w")
     logFile.write(log)
     logFile.close()
-    
+    '''
     '''
     logFile = open("egypt9.txt", "r")
     log = logFile.read()[:-1]
     logFile.close()
     bot.replayClickLog(log)
     '''
-    bot.editClickLog("egypt10.txt")
     
-    quit()
+    #bot.editClickLog("china3.txt")
+    
+     
+    #quit()
     
     
     #worlds = ["egypt", "china", "greece"]
