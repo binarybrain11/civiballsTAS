@@ -2,6 +2,7 @@ import pyautogui
 import pynput
 import time
 import os
+import numpy as np
 
 class TASBOT:
     def __init__(self, x = None, y = None, xmax = None, ymax = None):
@@ -21,12 +22,21 @@ class TASBOT:
         self.focusClick = {"x":0.05, "y":0.5}
         # Keyboard listener logs the last key pressed here
         self.listenKey = 0
+        # Clicks this close together aren't moved since 
+        # moving the mouse takes about this much time
+        self.doubleClickThreshold = 0.105
         pass
+
+    def gameFound(self):
+        if self.x is None or self.y is None or self.xmax is None or \
+           self.ymax is None or self.xscale is None or self.yscale is None:
+            return False
+        return True
 
     # x and y are between 0 and 1
     def moveMouse(self, x, y):
         if 0 > x or x > 1 or 0 > y or y > 1:
-            print("TASBOT.moveMouse(x,y) expects arguments between 0 and 1")
+            print("TASBOT.moveMouse(x,y) expects arguments between 0 and 1, not ", (x, y))
             return
         if self.x is None or self.xscale is None or self.y is None or self.yscale is None:
             print("")
@@ -41,7 +51,16 @@ class TASBOT:
         return pyautogui.position()
 
     def findGame(self):
-        borderColor = (192, 200, 211)
+        borderColor = (0, 0, 0)
+
+        while choice[0] != "h" and choice[0] != "f":
+            choice = input("Use html color or flash color for border detection? (h/f)")
+            if choice = "h":
+                borderColor = (192, 200, 211)          # Color for html version
+            elif choice = "f":
+                borderColor = (0, 0, 0)
+            else:
+                print(choice, " is not a valid option!")
 
         print("Click somewhere on the Civiballs game window:")
 
@@ -116,26 +135,43 @@ class TASBOT:
         self.waitForClick()
         x,y = pyautogui.position()
         print("(x = ", x, ", y = ", y, ")")
-        print("(x = ", (x - self.x) / self.xscale, ", y = ", (y - self.y) / self.yscale, ')')
+        print("Color = ", pyautogui.pixel(x, y))
+        if self.x is None or self.xscale is None or self.y is None or self.yscale is None:
+            print("Game window not located yet")
+        else:
+            print("(x = ", (x - self.x) / self.xscale, ", y = ", (y - self.y) / self.yscale, ')')
 
     # Stores user inputs as a csv string with format
     # time, x, y
     # where time was since first click
     def logClicks(self):
-        log = ""
+        # Check that game window is found
+        if not self.gameFound():
+            self.findGame()
+        log = []
         # Wait for first click before starting timer
         self.waitForClick()
         start = time.time()
-        log += str(time.time() - start) + ","
         x,y = pyautogui.position()
-        log += str((x - self.x)/self.xscale) + ","
-        log += str((y - self.y)/self.yscale) + "\n"
+        scaledx = (x - self.x)/self.xscale
+        scaledy = (y - self.y)/self.yscale
+        log.append([0, scaledx, scaledy])
+        print((x,y), end=" -> ")
+        print((scaledx, scaledy))
         while self.waitForClick():
-            log += str(time.time() - start) + ","
+            curtime = time.time() - start
             x,y = pyautogui.position()
-            log += str((x - self.x)/self.xscale) + ","
-            log += str((y - self.y)/self.yscale) + "\n"
-        return log
+            scaledx = (x - self.x)/self.xscale
+            scaledy = (y - self.y)/self.yscale
+            log.append([curtime, scaledx, scaledy])
+            print((x,y), end=" -> ")
+            print((scaledx, scaledy))
+        logstr = ""
+        for click in log:
+            logstr += str(click[0]) + "," + str(click[1]) + "," + str(click[2]) + "\n"
+
+        # return everything but the last newline
+        return logstr[:-1] 
             
 
     def setSplitKey(self):
@@ -159,7 +195,7 @@ class TASBOT:
                     keyListener.stop()
                     # Reset ESC key 
                     if (self.listenKey is not None):
-                        keyListener = pynput.keyboard.Listener(on_release=self.listenerEscReset)
+                        keyListener = pynput.keyboard.Listener(on_release=self.listenerKeyReset)
                         keyListener.start()
                         keyListener.join()
                     return False
@@ -172,7 +208,7 @@ class TASBOT:
         self.listenKey = key
         return False
 
-    def listenerEscReset(self, key):
+    def listenerKeyReset(self, key):
         self.listenKey = None
         return False
 
@@ -180,44 +216,70 @@ class TASBOT:
         with pynput.keyboard.Listener(on_press=self.listenerOnPress) as listener:
             listener.join()
 
-    def replayClickLog(self, log):
+    def replayClickLog(self, log, focus=False, space=False):
+        # Check that game window is found
+        if not self.gameFound():
+            self.findGame()
         # process the log string into click events
         # Key listener allows for user to escape 
         print("Replay started! Cancel replay with ESC:")
         keyListener = pynput.keyboard.Listener(on_press=self.listenerOnPress)
-        keyListener.start()
         log = [[float(num) for num in click.split(",")] for click in log.split("\n")]
-        self.mouseClick(self.focusClick["x"], self.focusClick["y"])
-        start = time.time()
+        # Click on the game window to put it in focus
+        if focus:
+            self.mouseClick(self.focusClick["x"], self.focusClick["y"])
+        # Reset the stage
+        if space:
+            pyautogui.press(" ")
+        # Don't start key listener until after space has been pressed
+        keyListener.start()
         # click[0] time after first click
         # click [1] x of click
         # click [2] y of click
-        for click in log:
-            # if first click in log file, start time after click
-            self.moveMouse(click[1], click[2])
-            if (click[0] < .0001):
-                time.sleep(self.levelLoad)
+        # Start time after first click
+        click = log[0]
+        clicknum = 0
+        lastClickTime = click[0]
+        self.moveMouse(click[1], click[2])
+        # time.sleep(self.levelLoad)
+        self.mouseClick()
+        start = time.time()
+        # print(clicknum, ": ", click) 
+        # clicknum += 1
+        for click in log[1:]:
+            if click[0] < lastClickTime + self.doubleClickThreshold:
+                if click[0] > (time.time() - start):
+                    time.sleep(click[0] > (time.time() - start))
                 self.mouseClick()
-                start = time.time()
+                # print("Double Click!", end=" ")
+                # print(clicknum, ": ", click) 
+                # clicknum += 1
+                lastClickTime = click[0]
                 continue
-
+            self.moveMouse(click[1], click[2])
+            lastClickTime = click[0]
             if self.listenKey == pynput.keyboard.Key.esc:
-                    print("Cancelled wait: ESC")
-                    keyListener.stop()
-                    # Reset ESC key 
-                    if (self.listenKey is not None):
-                        keyListener = pynput.keyboard.Listener(on_release=self.listenerEscReset)
-                        keyListener.start()
-                        keyListener.join()
-                    return False
-
+                print("Cancelled wait: ESC")
+                keyListener.stop()
+                # Reset ESC key 
+                if (self.listenKey is not None):
+                    '''
+                    keyListener = pynput.keyboard.Listener(on_release=self.listenerKeyReset)
+                    keyListener.start()
+                    keyListener.join()
+                    '''
+                    self.listenKey = None
+                return False
+            # print(clicknum, ": ", click) 
             if click[0] > (time.time() - start):
                 
                 time.sleep(click[0] - (time.time() - start))
+                self.mouseClick()
             else:
-                print("Too slow!")
-                
-            self.mouseClick()
+                self.mouseClick()
+                # print("Mouse moved too slow!", end=" ")
+            # clicknum += 1
+
         return True
 
     def editClickLog(self, path):
@@ -225,17 +287,14 @@ class TASBOT:
         # Keep track of the min and max delay to do a binary search for best delay
         clickRange = {"min": None, "max": None, "fast grow": 1}
         clickDict = {}
-        noReplay = ["help", "record", "new"]
-        command = ""
+        logFile = open(path, "r")
+        log = logFile.read()
+        logFile.close()
+        change = False
+        command = "help"
         while True:
-            logFile = open(path, "r")
-            log = logFile.read()[:-1]
-            logFile.close()
-            if not (command in noReplay):
-                self.replayClickLog(log)
-            newLog = None
             # command processing
-            command = input(": ").split(" ")
+            command = input(path + "> ").split(" ")
             if command[0] == "help":
                 print('''
 quit                        Quits the editor
@@ -249,21 +308,19 @@ slow    <click number>      Attempts to do an incremental binary search for best
                             negative indexed (last click is index -1). Slow 
                             indicates the click was too slow, so the delay will be 
                             decreased.
+add     <click number> <n>  Add n to the time, default to 0.01
+sub     <click number> <n>  Subtract n to the time, default to 0.01
 swap    <click 1> <click 2> Swaps the order of the two clicks specified. 
 record                      Overwrites the current file with a new recording. After 
                             confirmation prompt, recording starts on the next click.
+play                        Replays the recording
 load    <file path>         Saves the current file and opens the file specified. If
                             that file can't be opened, then the current file remains
                             open. 
-new     <file path>         Creates a new file, records the user's clicks, then saves 
-                            the recording to that file. 
+new     <file path>         Creates a new file and loads that file. 
+save    <file path>         Saves the current recording to the specified file. If no 
+                            file is provided, the currently open file is used
 
-    A typical workflow starts with opening a level in game, then loading the level log
-file in the editor. The editor will play back that log file, then prompt for input with 
-: at which point the user should prepare the game for the following command, for example 
-resetting the level before changing the timing  for a click, because in most cases the 
-editor will replay the log right after a change to it. To replay the log without any 
-changes to it, simply hit enter without any commands or send an unrecognized command.
                 ''')
             # fast indicates the click was too soon. Click number is first argument
             # and is 0 indexed for simple code, in other words the first click has 
@@ -273,7 +330,7 @@ changes to it, simply hit enter without any commands or send an unrecognized com
                 logLines = log.split("\n")
                 if len(command) < 2:
                     print("Improper use of fast:\n: fast <click number>")
-                elif int(command[1]) > len(logLines) or int(command[1]) < -1 * len(logLines):
+                elif int(command[1]) >= len(logLines) or int(command[1]) < -1 * len(logLines):
                     print("Click number exceeds number of clicks")
                 else:
                     click = None
@@ -287,14 +344,16 @@ changes to it, simply hit enter without any commands or send an unrecognized com
                     # Since the click was too fast, the click has at least this delay
                     range["min"] = clickTime
                     if range["max"] is None:
-                        newClickTime = range["min"] + 0.5
+                        newClickTime = range["min"] + 1
                     else:
                         newClickTime = (range["max"] + range["min"])/2
                     click[0] = str(newClickTime)
                     # combine elements in array click to a single string
                     newLogLine = ",".join(click)
                     logLines[int(command[1])] = newLogLine
-                    newLog = "\n".join(logLines)
+                    log = "\n".join(logLines)
+                    change = True
+                    self.replayClickLog(log, space=True, focus=True)
 
             elif command[0] == "slow":
                 logLines = log.split("\n")
@@ -314,14 +373,61 @@ changes to it, simply hit enter without any commands or send an unrecognized com
                     # Since the click was too slow, the click has at most this delay
                     range["max"] = clickTime
                     if range["min"] is None:
-                        newClickTime = range["max"] - 0.5
+                        newClickTime = range["max"] - 1
+                        if newClickTime < 0:
+                            newClickTime = range["max"] / 2
+                            range["min"] = 0
                     else:
                         newClickTime = (range["max"] + range["min"])/2
                     click[0] = str(newClickTime)
                     # combine elements in array click to a single string
                     newLogLine = ",".join(click)
                     logLines[int(command[1])] = newLogLine
-                    newLog = "\n".join(logLines)
+                    log = "\n".join(logLines)
+                    change = True
+                    self.replayClickLog(log, space=True, focus=True)
+
+            elif command[0] == "add":
+                logLines = log.split("\n")
+                if len(command) < 2:
+                    print("Improper use of add:\n: slow <click number> <n (optional)>")
+                elif int(command[1]) > len(logLines) or int(command[1]) < -1 * len(logLines):
+                    print("Click number exceeds number of clicks")
+                else:
+                    n = 0.01
+                    if len(command) >= 3:
+                        n = float(command[2])
+                    click = None
+                    click = logLines[int(command[1])].split(",")
+                    clickTime = float(click[0])
+                    click[0] = str(clickTime + n)
+                    # combine elements in array click to a single string
+                    newLogLine = ",".join(click)
+                    logLines[int(command[1])] = newLogLine
+                    log = "\n".join(logLines)
+                    change = True
+                    self.replayClickLog(log, space=True, focus=True)
+                
+            elif command[0] == "sub":
+                logLines = log.split("\n")
+                if len(command) < 2:
+                    print("Improper use of add:\n: slow <click number> <n (optional)>")
+                elif int(command[1]) > len(logLines) or int(command[1]) < -1 * len(logLines):
+                    print("Click number exceeds number of clicks")
+                else:
+                    n = 0.01
+                    if len(command) >= 3:
+                        n = float(command[2])
+                    click = None
+                    click = logLines[int(command[1])].split(",")
+                    clickTime = float(click[0])
+                    click[0] = str(clickTime - n)
+                    # combine elements in array click to a single string
+                    newLogLine = ",".join(click)
+                    logLines[int(command[1])] = newLogLine
+                    log = "\n".join(logLines)
+                    change = True
+                    self.replayClickLog(log, space=True, focus=True)
 
             elif command[0] == "swap":
                 logLines = log.split("\n")
@@ -330,36 +436,170 @@ changes to it, simply hit enter without any commands or send an unrecognized com
                 elif int(command[1]) > len(logLines) or int(command[1]) < -1 * len(logLines) or int(command[2]) > len(logLines) or int(command[2]) < -1 * len(logLines):
                     print("Click number exceeds number of clicks")
                 else:
-                    temp = logLines[int(command[1])]
-                    logLines[int(command[1])] = logLines[int(command[2])]
-                    logLines[int(command[2])] = temp
-                    newLog = "\n".join(logLines)
+                    click1 = [float(num) for num in logLines[int(command[1])].split(",")]
+                    click2 = [float(num) for num in logLines[int(command[2])].split(",")]
+                    # We want the times to stay the same
+                    temp = [click1[0], click2[1], click2[2]]
+                    click2[1], click2[2] = click1[1], click1[2]
+                    click1[1], click1[2] = temp[1], temp[2]
+                    logLines[int(command[1])] = ",".join([str(num) for num in click1])
+                    logLines[int(command[2])] = ",".join([str(num) for num in click2])
+                    log = "\n".join(logLines)
+                    clickDict[int(command[1])] = clickRange.copy()
+                    clickDict[int(command[2])] = clickRange.copy()
+                    change = True
+                    self.replayClickLog(log, space=True, focus=True)
+
+            elif command[0] == "moveclick":
+                logLines = log.split("\n")
+                if len(command) < 2:
+                    print("Improper use of moveclick:\n: moveclick <click number>")
+                elif int(command[1]) > len(logLines) or int(command[1]) < -1 * len(logLines):
+                    print("Click number exceeds number of clicks")
+                else:
+                    click = None
+                    click = logLines[int(command[1])].split(",")
+                    print("Click where click number ", int(command[1]), "should go: ")
+                    self.waitForClick()
+                    x, y = pyautogui.position()
+                    scaledx = (x - self.x)/self.xscale
+                    scaledy = (y - self.y)/self.yscale
+                    click[1], click[2] = str(scaledx), str(scaledy)
+                    # combine elements in array click to a single string
+                    newLogLine = ",".join(click)
+                    logLines[int(command[1])] = newLogLine
+                    log = "\n".join(logLines)
+                    change = True
 
             elif command[0] == "record":
-                confirm = input("Recording will overwrite the current file. Are you sure? (y/n)")
-                if confirm[0] == "y":
-                    print("Recording will start on your first click: ")
-                    newLog = self.logClicks()
+                print("Stop the recording by holding ESC.")
+                print("Recording will start on your first click: ")
+                log = self.logClicks()
+                change = True
+
+            elif command[0] == "play":
+                self.replayClickLog(log, space=True, focus=True)
+
+            elif command[0] == "load":
+                if len(command) < 2:
+                    print("Improper use of load:\n: load <file path>")
+                elif change:
+                    ok = input("There are unsaved changes. Are you sure you want to lose changes and quit? (y/n) ")
+                    if ok[0] != 'y':
+                        continue
+                if os.access(command[1], os.R_OK) and os.access(command[1], os.W_OK):
+                    path = command[1]
+                    clickDict = {}
+                    logFile = open(path, "r")
+                    log = logFile.read()[:-1]
+                    logFile.close()
+                    change = False
+                else:
+                    print("Can't read or can't write to ", path)
+
+            elif command[0] == "new":
+                if len(command) < 2:
+                    print("Improper use of new:\n: new <file path>")
+                elif change:
+                    ok = input("There are unsaved changes. Are you sure you want to lose changes and create a new file? (y/n) ")
+                    if ok[0] != 'y':
+                        continue
+                path = command[1]
+                logfile = open(path, "w")
+                logfile.close()
+                clickDict = {}
+                log = None
+
+            elif command[0] == "quit":
+                if change:
+                    ok = input("There are unsaved changes. Are you sure you want to lose changes and quit? (y/n) ")
+                    if ok[0] != 'y':
+                        continue
+                return
+                
+            elif command[0] == "save":
+                logFile = open(path, "w")
+                logFile.write(log)
+                logFile.close()
+                change = False
+                clickDict = {}
+
+            elif command[0] == "":
+                # do nothing
+                True
+            else: 
+                print("Command not recognized. ")
+
+            
+    def cli(self):
+        print("Type 'help' for a list of commands")
+        command = "help"
+        while True:
+            # command processing
+            command = input(": ").split(" ")
+            if command[0] == "help":
+                print('''
+quit                        Quits the cli
+record                      Same as new
+load    <file path>         Loads the file into the recording editor
+new     <file path>         Creates a new file, records the user's clicks, then saves 
+                            the recording to that file. 
+findborders                 Tells the bot to find the game window (recommended)
+setborders                  Manually set the game borders in case findgame fails 
+                            (or takes too long, though we recommend using findgame for 
+                            better replay consistency)
+checkborders                Moves cursor to top-left of game window and bottom right of 
+                            game window to make sure the detection is correct
+playlogs                    Play logs in order as they are given
+                ''')
 
             elif command[0] == "load":
                 if len(command) < 2:
                     print("Improper use of load:\n: load <file path>")
                 else:
                     if os.access(command[1], os.R_OK) and os.access(command[1], os.W_OK):
-                        path = command[1]
-                        clickDict = {}
+                        self.editClickLog(command[1])
 
-            elif command[0] == "new":
+
+            elif command[0] == "new" or command[0] == "record":
                 if len(command) < 2:
-                    print("Improper use of new:\n: new <file path>")
+                    path = input("Name of log file to create: ")
                 else:
-                    if os.access(command[1], os.W_OK):
-                        path = command[1]
-                        clickDict = {}
-                        print("Ready to log ", path)
-                        newLog = self.logClicks()
-                    else:
-                        print("Can't write to ", command[1])
+                    path = command[1]
+                logfile = open(path, "w")
+                logfile.close()
+                self.editClickLog(path)
+
+            elif command[0] == "findborders":
+                self.findGame()
+
+            elif command[0] == "checkborders":
+                print("Moving cursor to top-left ", (self.x,self.y), ".")
+                self.moveMouse(0,0)
+                print("Cursor moved! Press any key to check bottom right: ")
+                self.waitForKeyPress()
+                print("Moving cursor to bottom-right ", (self.xmax, self.ymax), ".")
+                self.moveMouse(1,1)
+                print("Cursor moved!")
+
+            elif command[0] == "setborders":
+                print("Click in the top-left of your game window: ")
+                self.waitForClick()
+                self.x, self.y = pyautogui.position()
+                print((self.x, self.y))
+                print("Click in the bottom-right of your game window: ")
+                self.waitForClick()
+                self.xmax, self.ymax = pyautogui.position()
+                print((self.xmax, self.ymax))
+                self.xscale = self.xmax - self.x
+                self.yscale = self.ymax - self.y
+
+            elif command[0] == "playlogs":
+                for filepath in command[1:]:
+                    print("Running ", filepath)
+                    with open(filepath, 'r') as file:
+                        if not self.replayClickLog(file.read()):
+                            break
 
             elif command[0] == "quit":
                 return
@@ -368,60 +608,10 @@ changes to it, simply hit enter without any commands or send an unrecognized com
                 # do nothing
                 True
             else: 
-                print("Command not recognized. Nothing changed, replaying the log file: ")
+                print("Command not recognized. ")
 
-            if newLog is not None:    
-                logFile = open(path, "w")
-                logFile.write(newLog)
-                logFile.close()
-            
-
-#fullscreen = (312, 66, 1607, 1040)
-#left = (0, 198, 959, 916)
-
-#bot = TASBOT(0, 198, 959, 916)
-bot = TASBOT()
-
-if bot.xscale is not None or bot.findGame():
-    # print("Bot will start recording on the first click. Stop recording with the ESC key:")
-    time.sleep(1)
-    '''
-    print("Ready to log.")
-    log = bot.logClicks()
-    logFile = open("egypt10.txt", "w")
-    logFile.write(log)
-    logFile.close()
-    '''
-    '''
-    logFile = open("egypt9.txt", "r")
-    log = logFile.read()[:-1]
-    logFile.close()
-    bot.replayClickLog(log)
-    '''
-    
-    #bot.editClickLog("china3.txt")
-    
-     
-    #quit()
-    
-    
-    #worlds = ["egypt", "china", "greece"]
-    worlds = ["egypt"]
-    log = ""
-    for world in worlds:
-        for level in range(1,11):
-            '''
-            print("Ready to log " + world + str(level))
-            log = bot.logClicks()
-            logFile = open(world + str(level) + ".txt", "w")
-            logFile.write(log)
-            logFile.close()
-            '''
-            logFile = open(world + str(level) + ".txt", "r")
-            log += logFile.read()[:-1] + "\n"
-            logFile.close()
-    # remove trailing null
-    log = log[:-1]
-    bot.replayClickLog(log)
-    
-    
+if __name__ == "__main__": 
+    bot = TASBOT()
+    bot.cli()
+        
+        
